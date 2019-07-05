@@ -65,25 +65,22 @@ spec:
       serviceAccountName: private-dns
       restartPolicy: Always
       containers:
-      - name: private-dns
-        image: tanelmae/gke-private-dns:latest
-        imagePullPolicy: Always
-        env:
-          - name: GLOG_logtostderr
-            value: "1"
-        args:
-          - "-namespace"
-          - "default"
-          - "-label"
-          - "scope=global"
-          - "-zone"
-          - "my-zone"
-          - "-domain"
-          - "my.domain.space"
-          - "-sa-file"
-          - "/account/dns-account.json"
-          - "-debug"
-          - "true"
-        volumeMounts:
-          - name: service-account
-            mountPath: "/account"
+        - name: private-dns
+          image: tanelmae/gke-private-dns:latest
+          imagePullPolicy: Always
+          args:
+            - "-namespace"
+            - "default"
+            - "-label"
+            - "scope=global"
+            - "-zone"
+            - "my-zone"
+            - "-domain"
+            - "my.domain.space"
+            - "-sa-file"
+            - "/account/dns-account.json"
+            - "-debug"
+            - "true"
+          volumeMounts:
+            - name: service-account
+              mountPath: "/account"
