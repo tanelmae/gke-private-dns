@@ -154,6 +154,7 @@ func main() {
 	flag.DurationVar(&timeout, "timeout", time.Minute, "How long to wait for pod IP to be available")
 	flag.DurationVar(&syncInterval, "fallback-sync-interval", time.Minute*30, "Interval for fallback sync jobs")
 	flag.DurationVar(&watcherResync, "watcher-sync-interval", time.Minute*10, "Interval for fallback sync jobs")
+	flag.Set("logtostderr", "true")
 	flag.Parse()
 
 	config, err := rest.InClusterConfig()
