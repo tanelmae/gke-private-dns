@@ -1,0 +1,6 @@
+/example
+/vendor
+/bin
+Dockerfile
+.gitignore
+*.md
