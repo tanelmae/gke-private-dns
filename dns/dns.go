@@ -13,15 +13,16 @@ import (
 
 // Wrapper for GCP SDK api to hold relevant conf
 type CloudDNS struct {
-	dnsSvc  *dns.Service
-	zone    string
-	project string
-	domain  string
-	debug   bool
+	dnsSvc      *dns.Service
+	zone        string
+	project     string
+	domain      string
+	debug       bool
+	shortFormat bool
 }
 
 // For creating DNS client instance
-func DNSFromJSON(filePath, zone, project, domain string, debug bool) *CloudDNS {
+func DNSFromJSON(filePath, zone, project, domain string, shortFormat, debug bool) *CloudDNS {
 	dat, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		panic(err)
@@ -35,12 +36,19 @@ func DNSFromJSON(filePath, zone, project, domain string, debug bool) *CloudDNS {
 	if err != nil {
 		panic(err)
 	}
-	return &CloudDNS{dnsSvc: dnsSvc, zone: zone, project: project, domain: domain, debug: debug}
+	return &CloudDNS{dnsSvc: dnsSvc, zone: zone, project: project, domain: domain, debug: debug, shortFormat: shortFormat}
 }
 
 func (client CloudDNS) getRec(name, owner, ip string) *dns.ResourceRecordSet {
+	var nameField string
+	if client.shortFormat {
+		nameField = fmt.Sprintf("%s.%s.", name, client.domain)
+	} else {
+		nameField = fmt.Sprintf("%s.%s.%s.", name, owner, client.domain)
+	}
+
 	return &dns.ResourceRecordSet{
-		Name:    fmt.Sprintf("%s.%s.%s.", name, owner, client.domain),
+		Name:    nameField,
 		Rrdatas: []string{ip},
 		Ttl:     int64(60),
 		Type:    "A",

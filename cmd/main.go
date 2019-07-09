@@ -143,6 +143,7 @@ func getMetadata(urlPath string) string {
 func main() {
 	var zone, project, saFile, namespace, resLabel, domain string
 	var syncInterval, watcherResync time.Duration
+	var shortFormat bool
 	log.Println("service started")
 	flag.StringVar(&namespace, "namespace", "default", "Namespace in which to watch resource")
 	flag.StringVar(&resLabel, "label", "", "Resource label to watch")
@@ -151,6 +152,7 @@ func main() {
 	flag.StringVar(&saFile, "sa-file", "", "Path to GCP service account credentials")
 	flag.StringVar(&project, "project", "", "GCP project where the DNS zone is. Defaults to the same as GKE cluster.")
 	flag.BoolVar(&debug, "debug", false, "Run in debug mode")
+	flag.BoolVar(&shortFormat, "short-format", false, "Omit owner name fron the DNS record")
 	flag.DurationVar(&timeout, "timeout", time.Minute, "How long to wait for pod IP to be available")
 	flag.DurationVar(&syncInterval, "fallback-sync-interval", time.Minute*30, "Interval for fallback sync jobs")
 	flag.DurationVar(&watcherResync, "watcher-sync-interval", time.Minute*10, "Interval for fallback sync jobs")
@@ -190,7 +192,7 @@ func main() {
 	}
 
 	// JSON key file for service account with DNS admin permissions
-	dnsClient = dns.DNSFromJSON(saFile, zone, project, domain, debug)
+	dnsClient = dns.DNSFromJSON(saFile, zone, project, domain, shortFormat, debug)
 	log.Printf("DNS client: %+v\n", dnsClient)
 
 	go syncAllPodsJob(syncInterval, namespace, resLabel)
