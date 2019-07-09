@@ -23,10 +23,10 @@ require (
 	google.golang.org/api v0.5.0
 	gopkg.in/inf.v0 v0.9.0 // indirect
 	gopkg.in/yaml.v2 v2.2.1 // indirect
-	k8s.io/api v0.0.0-20190222213804-5cb15d344471
-	k8s.io/apimachinery v0.0.0-20190221213512-86fb29eff628
+	k8s.io/api v0.0.0-20181204000039-89a74a8d264d
+	k8s.io/apimachinery v0.0.0-20181127025237-2b1284ed4c93
 
-	k8s.io/client-go v0.0.0-20190507014756-65905f29c17c
+	k8s.io/client-go v10.0.0+incompatible
 	k8s.io/klog v0.3.0 // indirect
 	sigs.k8s.io/yaml v1.1.0 // indirect
 )
