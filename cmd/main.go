@@ -170,7 +170,7 @@ func main() {
 	}
 
 	watchlist := cache.NewFilteredListWatchFromClient(
-		kubeClient.Core().RESTClient(), "pods", namespace,
+		kubeClient.CoreV1().RESTClient(), "pods", namespace,
 		func(options *metav1.ListOptions) {
 			options.LabelSelector = resLabel
 		})
