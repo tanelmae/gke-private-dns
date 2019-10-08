@@ -1,4 +1,4 @@
-FROM golang:1.12.6-alpine3.9 AS builder
+FROM golang:1.13.1-alpine3.10 AS builder
 RUN apk --no-cache add git upx ca-certificates
 RUN mkdir -p /workspace
 COPY . /workspace
