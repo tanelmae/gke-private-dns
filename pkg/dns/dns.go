@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Wrapper for GCP SDK api to hold relevant conf
+// CloudDNS is a wrapper for GCP SDK api to hold relevant conf
 type CloudDNS struct {
 	dnsSvc      *dns.Service
 	zone        string
