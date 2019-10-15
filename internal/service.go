@@ -90,10 +90,16 @@ func (m RecordsManager) startWatcher() {
 // Could we use the Store instead?
 func (m RecordsManager) startSyncJob() {
 	go wait.PollInfinite(m.syncInterval, func() (done bool, err error) {
+		if m.debug {
+			log.Println("Background sync job started")
+		}
 		podsList, err := m.kubeClient.CoreV1().Pods(m.namespace).List(metav1.ListOptions{LabelSelector: m.resLabel})
 		if err != nil {
 			log.Println(err)
 			return false, err
+		}
+		if m.debug {
+			log.Printf("Found %d pods\n", len(podsList.Items))
 		}
 
 		bulker := dns.GetBulker(m.dnsClient)

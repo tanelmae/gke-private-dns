@@ -56,7 +56,7 @@ func main() {
 	}
 
 	// JSON key file for service account with DNS admin permissions
-	dnsClient := dns.DNSFromJSON(*saFile, *zone, gcpProject, *domain, *shortFormat, *debug)
+	dnsClient := dns.FromJSON(*saFile, *zone, gcpProject, *domain, *shortFormat, *debug)
 	if *debug {
 		log.Printf("DNS client: %+v\n", dnsClient)
 	}

@@ -21,8 +21,8 @@ type CloudDNS struct {
 	shortFormat bool
 }
 
-// For creating DNS client instance
-func DNSFromJSON(filePath, zone, project, domain string, shortFormat, debug bool) *CloudDNS {
+// FromJSON creaties DNS client instance with JSON key file
+func FromJSON(filePath, zone, project, domain string, shortFormat, debug bool) *CloudDNS {
 	dat, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		panic(err)
@@ -55,6 +55,7 @@ func (client CloudDNS) getRec(name, owner, ip string) *dns.ResourceRecordSet {
 	}
 }
 
+// DeleteRecord deletes a record
 func (client CloudDNS) DeleteRecord(name, owner, ip string) {
 	rec := client.getRec(name, owner, ip)
 
@@ -95,6 +96,7 @@ func (client CloudDNS) DeleteRecord(name, owner, ip string) {
 	}
 }
 
+// CreateRecord creates a record
 func (client CloudDNS) CreateRecord(name, owner, ip string) {
 	rec := client.getRec(name, owner, ip)
 	// Look for existing records.
@@ -151,13 +153,14 @@ type BulkSync struct {
 	list   map[string]*dns.ResourceRecordSet
 }
 
+// GetBulker returns BulkSync instance with loaded DNS list
 func GetBulker(client *CloudDNS) *BulkSync {
 	bulker := BulkSync{client: client}
 	bulker.loadList()
 	return &bulker
 }
 
-// Delete all stale records
+// DeleteRemaining deletes all stale records
 // Assumes that bulk.list only has stale records
 func (bulk BulkSync) DeleteRemaining() {
 	if len(bulk.list) == 0 {
@@ -167,6 +170,10 @@ func (bulk BulkSync) DeleteRemaining() {
 	var deletions []*dns.ResourceRecordSet
 	for _, rec := range bulk.list {
 		deletions = append(deletions, rec)
+	}
+
+	if bulk.client.debug {
+		log.Printf("%d stale records found\n", len(deletions))
 	}
 
 	change := &dns.Change{
@@ -179,6 +186,7 @@ func (bulk BulkSync) DeleteRemaining() {
 	}
 }
 
+// CheckNext checks next item from loaded DNS records
 func (bulk BulkSync) CheckNext(name, owner, ip string) {
 	// Check that record exists for the given pod with given IP
 	rec, found := bulk.list[name]
