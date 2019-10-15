@@ -12,55 +12,73 @@ import (
 	"time"
 )
 
-var (
-	kubeClient *kubernetes.Clientset
-	dnsClient  *dns.CloudDNS
-	debug      bool
-	timeout    time.Duration
-	pendingIP  = make(map[string]*v1.Pod)
-)
-
 // Run starts the service
-func Run(namespace, resLabel string, syncInterval, watcherResync, podTimeout time.Duration, cloudDNS *dns.CloudDNS, debugLogs bool) {
-	dnsClient = cloudDNS
-	timeout = podTimeout
-	debug = debugLogs
-
+func Run(namespace, resLabel string, syncInterval, watcherResync,
+	podTimeout time.Duration, cloudDNS *dns.CloudDNS, debugLogs bool) {
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		panic(err)
 	}
 
-	kubeClient, err = kubernetes.NewForConfig(config)
+	kubeClient, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		panic(err)
 	}
 
+	manager := RecordsManager{
+		dnsClient:     cloudDNS,
+		timeout:       podTimeout,
+		watcherResync: watcherResync,
+		syncInterval:  syncInterval,
+		debug:         debugLogs,
+		kubeClient:    kubeClient,
+		namespace:     namespace,
+		resLabel:      resLabel,
+	}
+
+	manager.startWatcher()
+}
+
+// RecordsManager ..
+type RecordsManager struct {
+	kubeClient    *kubernetes.Clientset
+	dnsClient     *dns.CloudDNS
+	debug         bool
+	timeout       time.Duration
+	watcherResync time.Duration
+	syncInterval  time.Duration
+	pendingIP     map[string]*v1.Pod
+	namespace     string
+	resLabel      string
+}
+
+func (m RecordsManager) startWatcher() {
 	watchlist := cache.NewFilteredListWatchFromClient(
-		kubeClient.CoreV1().RESTClient(), "pods", namespace,
+		m.kubeClient.CoreV1().RESTClient(), "pods", m.namespace,
 		func(options *metav1.ListOptions) {
-			options.LabelSelector = resLabel
+			options.LabelSelector = m.resLabel
 		})
 
 	_, controller := cache.NewInformer(
 		watchlist,
 		&v1.Pod{},
-		watcherResync,
+		m.watcherResync,
 		cache.ResourceEventHandlerFuncs{
-			AddFunc:    podCreated,
-			DeleteFunc: podDeleted,
-			UpdateFunc: podUpdated,
+			AddFunc:    m.podCreated,
+			DeleteFunc: m.podDeleted,
+			UpdateFunc: m.podUpdated,
 		},
 	)
-	log.Printf("Will watch pods with %s label in %s namespace\n", resLabel, namespace)
-
-	go syncAllPodsJob(syncInterval, namespace, resLabel)
-
 	/*
 		Initial startup will triggger AddFunc for all the pods that match the watchlist.
 		Handlers are run sequentally as the events come in.
 	*/
 	controller.Run(wait.NeverStop)
+	log.Printf("Will watch pods with %s label in %s namespace\n", m.resLabel, m.namespace)
+
+	// Checks with given interval that all expected records are there
+	// and removes any stale record if any is found.
+	m.startSyncJob()
 }
 
 /*
@@ -69,15 +87,16 @@ func Run(namespace, resLabel string, syncInterval, watcherResync, podTimeout tim
 	NOTE! This is the only part where DNS records are managed
 	asynchronously. Otherwise handlers are run sequentally based on cluster events.
 */
-func syncAllPodsJob(interval time.Duration, namespace, resLabel string) {
-	wait.PollInfinite(interval, func() (done bool, err error) {
-		podsList, err := kubeClient.CoreV1().Pods(namespace).List(metav1.ListOptions{LabelSelector: resLabel})
+// Could we use the Store instead?
+func (m RecordsManager) startSyncJob() {
+	go wait.PollInfinite(m.syncInterval, func() (done bool, err error) {
+		podsList, err := m.kubeClient.CoreV1().Pods(m.namespace).List(metav1.ListOptions{LabelSelector: m.resLabel})
 		if err != nil {
 			log.Println(err)
 			return false, err
 		}
 
-		bulker := dns.GetBulker(dnsClient)
+		bulker := dns.GetBulker(m.dnsClient)
 		for _, pod := range podsList.Items {
 			bulker.CheckNext(pod.GetName(), pod.GetOwnerReferences()[0].Name, pod.Status.PodIP)
 		}
@@ -90,10 +109,10 @@ func syncAllPodsJob(interval time.Duration, namespace, resLabel string) {
 	})
 }
 
-func podUpdated(oldObj, newObj interface{}) {
+func (m RecordsManager) podUpdated(oldObj, newObj interface{}) {
 	newPod := newObj.(*v1.Pod)
 
-	if debug {
+	if m.debug {
 		log.Printf("Pod updated: %s\n", newPod.Name)
 	}
 
@@ -102,15 +121,15 @@ func podUpdated(oldObj, newObj interface{}) {
 		we don't care about here. So we keep in memory list of pods that
 		we know that record hasn't been created.
 	*/
-	_, isPendingIP := pendingIP[newPod.GetName()]
+	_, isPendingIP := m.pendingIP[newPod.GetName()]
 	if isPendingIP && newPod.Status.PodIP != "" {
-		dnsClient.CreateRecord(newPod.GetName(), newPod.GetOwnerReferences()[0].Name, newPod.Status.PodIP)
-		delete(pendingIP, newPod.GetName())
+		m.dnsClient.CreateRecord(newPod.GetName(), newPod.GetOwnerReferences()[0].Name, newPod.Status.PodIP)
+		delete(m.pendingIP, newPod.GetName())
 	}
 }
 
 // Handler for pod creation
-func podCreated(obj interface{}) {
+func (m RecordsManager) podCreated(obj interface{}) {
 	pod := obj.(*v1.Pod)
 	log.Println("Pod created: " + pod.GetName())
 	var err error
@@ -123,8 +142,8 @@ func podCreated(obj interface{}) {
 	*/
 	if pod.Status.PodIP == "" {
 		log.Println("Pod IP missing. Will try to resolve.")
-		wait.Poll(2*time.Second, timeout, func() (bool, error) {
-			pod, err := kubeClient.CoreV1().Pods(pod.Namespace).Get(pod.GetName(), metav1.GetOptions{})
+		wait.Poll(2*time.Second, m.timeout, func() (bool, error) {
+			pod, err := m.kubeClient.CoreV1().Pods(pod.Namespace).Get(pod.GetName(), metav1.GetOptions{})
 			if err != nil {
 				panic(err)
 			}
@@ -135,26 +154,26 @@ func podCreated(obj interface{}) {
 			return false, nil
 		})
 
-		pod, err = kubeClient.CoreV1().Pods(pod.Namespace).Get(pod.GetName(), metav1.GetOptions{})
+		pod, err = m.kubeClient.CoreV1().Pods(pod.Namespace).Get(pod.GetName(), metav1.GetOptions{})
 		if err != nil {
 			panic(err)
 		}
 
 		// Leave if for the pod updated event handler
 		if pod.Status.PodIP == "" {
-			log.Printf("Failed get pod IP in %s\n", timeout)
-			pendingIP[pod.GetName()] = pod
+			log.Printf("Failed get pod IP in %s\n", m.timeout)
+			m.pendingIP[pod.GetName()] = pod
 			return
 		}
 	}
 
-	dnsClient.CreateRecord(pod.GetName(), pod.GetOwnerReferences()[0].Name, pod.Status.PodIP)
+	m.dnsClient.CreateRecord(pod.GetName(), pod.GetOwnerReferences()[0].Name, pod.Status.PodIP)
 }
 
 // Handler for pod deletion events
-func podDeleted(obj interface{}) {
+func (m RecordsManager) podDeleted(obj interface{}) {
 	pod := obj.(*v1.Pod)
 	log.Println("Pod deleted: " + pod.GetName())
 
-	dnsClient.DeleteRecord(pod.GetName(), pod.GetOwnerReferences()[0].Name, pod.Status.PodIP)
+	m.dnsClient.DeleteRecord(pod.GetName(), pod.GetOwnerReferences()[0].Name, pod.Status.PodIP)
 }
