@@ -137,7 +137,9 @@ func (m RecordsManager) podUpdated(oldObj, newObj interface{}) {
 // Handler for pod creation
 func (m RecordsManager) podCreated(obj interface{}) {
 	pod := obj.(*v1.Pod)
-	log.Println("Pod created: " + pod.GetName())
+	if m.debug {
+		log.Println("Pod created: " + pod.GetName())
+	}
 	var err error
 
 	/*
@@ -147,14 +149,18 @@ func (m RecordsManager) podCreated(obj interface{}) {
 		should catch those missing DNS recrods.
 	*/
 	if pod.Status.PodIP == "" {
-		log.Println("Pod IP missing. Will try to resolve.")
+		if m.debug {
+			log.Println("Pod IP missing. Will try to resolve.")
+		}
 		wait.Poll(2*time.Second, m.timeout, func() (bool, error) {
 			pod, err := m.kubeClient.CoreV1().Pods(pod.Namespace).Get(pod.GetName(), metav1.GetOptions{})
 			if err != nil {
 				panic(err)
 			}
 			if pod.Status.PodIP != "" {
-				log.Printf("Pod IP resolved: %s\n", pod.Status.PodIP)
+				if m.debug {
+					log.Printf("Pod IP resolved: %s\n", pod.Status.PodIP)
+				}
 				return true, nil
 			}
 			return false, nil
@@ -167,7 +173,9 @@ func (m RecordsManager) podCreated(obj interface{}) {
 
 		// Leave if for the pod updated event handler
 		if pod.Status.PodIP == "" {
-			log.Printf("Failed get pod IP in %s\n", m.timeout)
+			if m.debug {
+				log.Printf("Failed get pod IP in %s\n", m.timeout)
+			}
 			m.pendingIP[pod.GetName()] = pod
 			return
 		}
@@ -179,7 +187,9 @@ func (m RecordsManager) podCreated(obj interface{}) {
 // Handler for pod deletion events
 func (m RecordsManager) podDeleted(obj interface{}) {
 	pod := obj.(*v1.Pod)
-	log.Println("Pod deleted: " + pod.GetName())
+	if m.debug {
+		log.Println("Pod deleted: " + pod.GetName())
+	}
 
 	m.dnsClient.DeleteRecord(pod.GetName(), pod.GetOwnerReferences()[0].Name, pod.Status.PodIP)
 }
