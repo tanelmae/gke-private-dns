@@ -11,24 +11,24 @@ import (
 	"time"
 )
 
-func getMetadata(urlPath string) string {
+func getMetadata(urlPath string) (string, error) {
 	client := &http.Client{}
 	req, err := http.NewRequest("GET",
 		fmt.Sprintf("http://metadata/computeMetadata/v1/%s", urlPath), nil)
 	req.Header.Add("Metadata-Flavor", "Google")
 	resp, err := client.Do(req)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 
 	defer resp.Body.Close()
 
 	bodyBytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 
-	return string(bodyBytes)
+	return string(bodyBytes), nil
 }
 
 func main() {
@@ -48,9 +48,28 @@ func main() {
 	flag.Set("logtostderr", "true")
 	flag.Parse()
 
-	var gcpProject string
+	var (
+		gcpProject string
+		err        error
+	)
 	if *project == "" {
-		gcpProject = getMetadata("project/project-id")
+		for i := 1; i <= 3; i++ {
+			gcpProject, err = getMetadata("project/project-id")
+			if err != nil {
+				if *debug {
+					log.Printf("Reading GCP project name from metadata failed")
+				}
+				time.Sleep(time.Second * time.Duration(i))
+				if *debug {
+					log.Printf("Will try again reading GCP project name from metadata")
+				}
+			} else {
+				break
+			}
+		}
+		if gcpProject == "" {
+			panic("Failed to resolve GCP project from instance metadata")
+		}
 	} else {
 		gcpProject = *project
 	}
