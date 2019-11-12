@@ -6,8 +6,9 @@ import (
 	"github.com/tanelmae/gke-private-dns/internal"
 	"github.com/tanelmae/gke-private-dns/pkg/dns"
 	"io/ioutil"
-	"log"
+	"k8s.io/klog/v2"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -32,7 +33,8 @@ func getMetadata(urlPath string) (string, error) {
 }
 
 func main() {
-	log.Println("service started")
+	// Fix for Kubernetes client trying to log to /tmp
+	klog.SetOutput(os.Stderr)
 
 	namespace := flag.String("namespace", "default", "Namespace in which to watch resource")
 	resLabel := flag.String("label", "", "Resource label to watch")
@@ -48,6 +50,8 @@ func main() {
 	flag.Set("logtostderr", "true")
 	flag.Parse()
 
+	klog.Info("service started")
+
 	var (
 		gcpProject string
 		err        error
@@ -57,18 +61,18 @@ func main() {
 			gcpProject, err = getMetadata("project/project-id")
 			if err != nil {
 				if *debug {
-					log.Printf("Reading GCP project name from metadata failed")
+					klog.Infoln("Reading GCP project name from metadata failed")
 				}
 				time.Sleep(time.Second * time.Duration(i))
 				if *debug {
-					log.Printf("Will try again reading GCP project name from metadata")
+					klog.Infoln("Will try again reading GCP project name from metadata")
 				}
 			} else {
 				break
 			}
 		}
 		if gcpProject == "" {
-			panic("Failed to resolve GCP project from instance metadata")
+			klog.Fatalln("Failed to resolve GCP project from instance metadata")
 		}
 	} else {
 		gcpProject = *project
@@ -77,7 +81,8 @@ func main() {
 	// JSON key file for service account with DNS admin permissions
 	dnsClient := dns.FromJSON(*saFile, *zone, gcpProject, *domain, *shortFormat, *debug)
 	if *debug {
-		log.Printf("DNS client: %+v\n", dnsClient)
+		klog.Infoln("DNS client: %+v\n", dnsClient)
 	}
+	klog.Flush()
 	internal.Run(*namespace, *resLabel, *syncInterval, *watcherResync, *timeout, dnsClient, *debug)
 }
