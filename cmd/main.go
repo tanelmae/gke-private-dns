@@ -81,7 +81,7 @@ func main() {
 	// JSON key file for service account with DNS admin permissions
 	dnsClient := dns.FromJSON(*saFile, *zone, gcpProject, *domain, *shortFormat, *debug)
 	if *debug {
-		klog.Infoln("DNS client: %+v\n", dnsClient)
+		klog.Infof("DNS client: %+v\n", dnsClient)
 	}
 	klog.Flush()
 	internal.Run(*namespace, *resLabel, *syncInterval, *watcherResync, *timeout, dnsClient, *debug)
