@@ -33,6 +33,7 @@ func getMetadata(urlPath string) (string, error) {
 }
 
 func main() {
+	klog.InitFlags(nil)
 	// Fix for Kubernetes client trying to log to /tmp
 	klog.SetOutput(os.Stderr)
 
@@ -42,7 +43,6 @@ func main() {
 	zone := flag.String("zone", "", "GCP DNS zone where to write the records")
 	saFile := flag.String("sa-file", "", "Path to GCP service account credentials")
 	project := flag.String("project", "", "GCP project where the DNS zone is. Defaults to the same as GKE cluster.")
-	debug := flag.Bool("debug", false, "Run in debug mode")
 	shortFormat := flag.Bool("short-format", false, "Omit owner name fron the DNS record")
 	timeout := flag.Duration("timeout", time.Minute, "How long to wait for pod IP to be available")
 	syncInterval := flag.Duration("fallback-sync-interval", time.Minute*30, "Interval for fallback sync jobs")
@@ -60,13 +60,9 @@ func main() {
 		for i := 1; i <= 3; i++ {
 			gcpProject, err = getMetadata("project/project-id")
 			if err != nil {
-				if *debug {
-					klog.Infoln("Reading GCP project name from metadata failed")
-				}
+				klog.Infoln("Reading GCP project name from metadata failed")
 				time.Sleep(time.Second * time.Duration(i))
-				if *debug {
-					klog.Infoln("Will try again reading GCP project name from metadata")
-				}
+				klog.Infoln("Will try again reading GCP project name from metadata")
 			} else {
 				break
 			}
@@ -79,10 +75,8 @@ func main() {
 	}
 
 	// JSON key file for service account with DNS admin permissions
-	dnsClient := dns.FromJSON(*saFile, *zone, gcpProject, *domain, *shortFormat, *debug)
-	if *debug {
-		klog.Infof("DNS client: %+v\n", dnsClient)
-	}
+	dnsClient := dns.FromJSON(*saFile, *zone, gcpProject, *domain, *shortFormat)
+	klog.Infof("DNS client: %+v\n", dnsClient)
 	klog.Flush()
-	internal.Run(*namespace, *resLabel, *syncInterval, *watcherResync, *timeout, dnsClient, *debug)
+	internal.Run(*namespace, *resLabel, *syncInterval, *watcherResync, *timeout, dnsClient)
 }

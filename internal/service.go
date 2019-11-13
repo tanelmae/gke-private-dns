@@ -8,21 +8,21 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
-	"log"
+	"k8s.io/klog/v2"
 	"time"
 )
 
 // Run starts the service
 func Run(namespace, resLabel string, syncInterval, watcherResync,
-	podTimeout time.Duration, cloudDNS *dns.CloudDNS, debugLogs bool) {
+	podTimeout time.Duration, cloudDNS *dns.CloudDNS) {
 	config, err := rest.InClusterConfig()
 	if err != nil {
-		panic(err)
+		klog.Fatalln(err)
 	}
 
 	kubeClient, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		panic(err)
+		klog.Fatalln(err)
 	}
 
 	manager := RecordsManager{
@@ -30,7 +30,6 @@ func Run(namespace, resLabel string, syncInterval, watcherResync,
 		timeout:       podTimeout,
 		watcherResync: watcherResync,
 		syncInterval:  syncInterval,
-		debug:         debugLogs,
 		kubeClient:    kubeClient,
 		namespace:     namespace,
 		resLabel:      resLabel,
@@ -43,7 +42,6 @@ func Run(namespace, resLabel string, syncInterval, watcherResync,
 type RecordsManager struct {
 	kubeClient    *kubernetes.Clientset
 	dnsClient     *dns.CloudDNS
-	debug         bool
 	timeout       time.Duration
 	watcherResync time.Duration
 	syncInterval  time.Duration
@@ -74,7 +72,7 @@ func (m RecordsManager) startWatcher() {
 		Handlers are run sequentally as the events come in.
 	*/
 	controller.Run(wait.NeverStop)
-	log.Printf("Will watch pods with %s label in %s namespace\n", m.resLabel, m.namespace)
+	klog.Infof("Will watch pods with %s label in %s namespace\n", m.resLabel, m.namespace)
 
 	// Checks with given interval that all expected records are there
 	// and removes any stale record if any is found.
@@ -90,17 +88,13 @@ func (m RecordsManager) startWatcher() {
 // Could we use the Store instead?
 func (m RecordsManager) startSyncJob() {
 	go wait.PollInfinite(m.syncInterval, func() (done bool, err error) {
-		if m.debug {
-			log.Println("Background sync job started")
-		}
+		klog.V(2).Infoln("Background sync job started")
 		podsList, err := m.kubeClient.CoreV1().Pods(m.namespace).List(metav1.ListOptions{LabelSelector: m.resLabel})
 		if err != nil {
-			log.Println(err)
+			klog.Error(err)
 			return false, err
 		}
-		if m.debug {
-			log.Printf("Found %d pods\n", len(podsList.Items))
-		}
+		klog.V(2).Infof("Found %d pods\n", len(podsList.Items))
 
 		bulker := dns.GetBulker(m.dnsClient)
 		for _, pod := range podsList.Items {
@@ -117,10 +111,7 @@ func (m RecordsManager) startSyncJob() {
 
 func (m RecordsManager) podUpdated(oldObj, newObj interface{}) {
 	newPod := newObj.(*v1.Pod)
-
-	if m.debug {
-		log.Printf("Pod updated: %s\n", newPod.Name)
-	}
+	klog.V(2).Infof("Pod updated: %s\n", newPod.Name)
 
 	/*
 		Pod update handler is triggered quite often and for things
@@ -137,9 +128,7 @@ func (m RecordsManager) podUpdated(oldObj, newObj interface{}) {
 // Handler for pod creation
 func (m RecordsManager) podCreated(obj interface{}) {
 	pod := obj.(*v1.Pod)
-	if m.debug {
-		log.Println("Pod created: " + pod.GetName())
-	}
+	klog.V(2).Infof("Pod created: %s", pod.GetName())
 	var err error
 
 	/*
@@ -149,18 +138,15 @@ func (m RecordsManager) podCreated(obj interface{}) {
 		should catch those missing DNS recrods.
 	*/
 	if pod.Status.PodIP == "" {
-		if m.debug {
-			log.Println("Pod IP missing. Will try to resolve.")
-		}
+		klog.Warningln("Pod IP missing. Will try to resolve.")
 		wait.Poll(2*time.Second, m.timeout, func() (bool, error) {
 			pod, err := m.kubeClient.CoreV1().Pods(pod.Namespace).Get(pod.GetName(), metav1.GetOptions{})
 			if err != nil {
-				panic(err)
+				klog.Error(err)
+				return false, nil
 			}
 			if pod.Status.PodIP != "" {
-				if m.debug {
-					log.Printf("Pod IP resolved: %s\n", pod.Status.PodIP)
-				}
+				klog.V(2).Infof("Pod IP resolved: %s\n", pod.Status.PodIP)
 				return true, nil
 			}
 			return false, nil
@@ -168,14 +154,12 @@ func (m RecordsManager) podCreated(obj interface{}) {
 
 		pod, err = m.kubeClient.CoreV1().Pods(pod.Namespace).Get(pod.GetName(), metav1.GetOptions{})
 		if err != nil {
-			panic(err)
+			klog.Error(err)
 		}
 
 		// Leave if for the pod updated event handler
-		if pod.Status.PodIP == "" {
-			if m.debug {
-				log.Printf("Failed get pod IP in %s\n", m.timeout)
-			}
+		if err != nil || pod.Status.PodIP == "" {
+			klog.V(2).Infof("Failed get pod IP in %s\n", m.timeout)
 			m.pendingIP[pod.GetName()] = pod
 			return
 		}
@@ -187,9 +171,7 @@ func (m RecordsManager) podCreated(obj interface{}) {
 // Handler for pod deletion events
 func (m RecordsManager) podDeleted(obj interface{}) {
 	pod := obj.(*v1.Pod)
-	if m.debug {
-		log.Println("Pod deleted: " + pod.GetName())
-	}
+	klog.V(2).Infof("Pod deleted: %s", pod.GetName())
 
 	m.dnsClient.DeleteRecord(pod.GetName(), pod.GetOwnerReferences()[0].Name, pod.Status.PodIP)
 }

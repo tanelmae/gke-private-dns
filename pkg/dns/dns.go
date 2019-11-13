@@ -6,7 +6,7 @@ import (
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/dns/v1"
 	"io/ioutil"
-	"log"
+	"k8s.io/klog/v2"
 	"strings"
 	"time"
 )
@@ -17,26 +17,25 @@ type CloudDNS struct {
 	zone        string
 	project     string
 	domain      string
-	debug       bool
 	shortFormat bool
 }
 
 // FromJSON creaties DNS client instance with JSON key file
-func FromJSON(filePath, zone, project, domain string, shortFormat, debug bool) *CloudDNS {
+func FromJSON(filePath, zone, project, domain string, shortFormat bool) *CloudDNS {
 	dat, err := ioutil.ReadFile(filePath)
 	if err != nil {
-		panic(err)
+		klog.Fatalln(err)
 	}
 
 	conf, err := google.JWTConfigFromJSON(dat, dns.NdevClouddnsReadwriteScope)
 	if err != nil {
-		panic(err)
+		klog.Fatalln(err)
 	}
 	dnsSvc, err := dns.New(conf.Client(oauth2.NoContext))
 	if err != nil {
-		panic(err)
+		klog.Fatalln(err)
 	}
-	return &CloudDNS{dnsSvc: dnsSvc, zone: zone, project: project, domain: domain, debug: debug, shortFormat: shortFormat}
+	return &CloudDNS{dnsSvc: dnsSvc, zone: zone, project: project, domain: domain, shortFormat: shortFormat}
 }
 
 func (client CloudDNS) getRec(name, owner, ip string) *dns.ResourceRecordSet {
@@ -67,24 +66,18 @@ func (client CloudDNS) DeleteRecord(name, owner, ip string) {
 	}
 
 	if len(list.Rrsets) == 0 {
-		if client.debug {
-			log.Printf("No DNS record found for %s/%s", rec.Name, ip)
-		}
+		klog.V(2).Infof("No DNS record found for %s/%s", rec.Name, ip)
 		return
 	}
 
 	// If records and pods have somehow got into inconsistent state
 	// we avoid deleting records that don't match the event.
 	if ip != list.Rrsets[0].Rrdatas[0] {
-		if client.debug {
-			log.Printf("No DNS record found for %s with the same IP (%s)", rec.Name, ip)
-		}
+		klog.V(2).Infof("No DNS record found for %s with the same IP (%s)", rec.Name, ip)
 		return
 	}
 
-	if client.debug {
-		log.Printf("Deleting record: %+v\n", rec)
-	}
+	klog.V(2).Infof("Deleting record: %+v\n", rec)
 
 	change := &dns.Change{
 		Deletions: []*dns.ResourceRecordSet{rec},
@@ -98,11 +91,14 @@ func (client CloudDNS) DeleteRecord(name, owner, ip string) {
 
 // CreateRecord creates a record
 func (client CloudDNS) CreateRecord(name, owner, ip string) {
+	// Any error with CloudDNS API will leave the cleanup to bulker job
+
 	rec := client.getRec(name, owner, ip)
 	// Look for existing records.
 	list, err := client.dnsSvc.ResourceRecordSets.List(client.project, client.zone).Name(rec.Name).Type(rec.Type).MaxResults(1).Do()
 	if err != nil {
-		panic(err)
+		klog.Errorln(err)
+		return
 	}
 
 	change := &dns.Change{
@@ -111,27 +107,22 @@ func (client CloudDNS) CreateRecord(name, owner, ip string) {
 
 	if len(list.Rrsets) > 0 {
 		if rec.Name == list.Rrsets[0].Name && rec.Rrdatas[0] == list.Rrsets[0].Rrdatas[0] {
-			if client.debug {
-				log.Printf("Record exists: %+v\n", rec)
-			}
+			klog.V(2).Infof("Record exists: %+v\n", rec)
 			return
 		}
 		if rec.Name == list.Rrsets[0].Name && rec.Rrdatas[0] != list.Rrsets[0].Rrdatas[0] {
 			// Just a safeguard for case there is some stale record
-			if client.debug {
-				log.Printf("Stale record found: %+v\n", list.Rrsets[0])
-			}
+			klog.V(2).Infof("Stale record found: %+v\n", list.Rrsets[0])
 			change.Deletions = []*dns.ResourceRecordSet{list.Rrsets[0]}
 		}
 	}
 
-	if client.debug {
-		log.Printf("Creating record: %+v\n", rec)
-	}
+	klog.V(2).Infof("Creating record: %+v\n", rec)
 
 	chg, err := client.dnsSvc.Changes.Create(client.project, client.zone, change).Do()
 	if err != nil {
-		panic(err)
+		klog.Errorln(err)
+		return
 	}
 
 	// wait for change to be acknowledged
@@ -140,7 +131,8 @@ func (client CloudDNS) CreateRecord(name, owner, ip string) {
 
 		chg, err = client.dnsSvc.Changes.Get(client.project, client.zone, chg.Id).Do()
 		if err != nil {
-			panic(err)
+			klog.Errorln(err)
+			return
 		}
 	}
 }
@@ -172,9 +164,7 @@ func (bulk BulkSync) DeleteRemaining() {
 		deletions = append(deletions, rec)
 	}
 
-	if bulk.client.debug {
-		log.Printf("%d stale records found\n", len(deletions))
-	}
+	klog.V(2).Infof("%d stale records found\n", len(deletions))
 
 	change := &dns.Change{
 		Deletions: deletions,
@@ -191,9 +181,7 @@ func (bulk BulkSync) CheckNext(name, owner, ip string) {
 	// Check that record exists for the given pod with given IP
 	rec, found := bulk.list[name]
 	if found && rec.Rrdatas[0] == ip {
-		if bulk.client.debug {
-			log.Printf("Record found for %s:%v\n", name, rec)
-		}
+		klog.V(2).Infof("Record found for %s:%v\n", name, rec)
 		delete(bulk.list, name)
 	} else {
 		bulk.client.CreateRecord(name, owner, ip)
@@ -211,9 +199,7 @@ func (bulk BulkSync) loadList() {
 		if strings.HasSuffix(rec.Name, bulk.client.domain+".") {
 			name := rec.Name[:strings.IndexByte(rec.Name, '.')]
 			list[name] = rec
-			if bulk.client.debug {
-				log.Printf("Found DNS record for %s:%s", name, rec.Name)
-			}
+			klog.V(2).Infof("Found DNS record for %s:%s", name, rec.Name)
 		}
 	}
 	bulk.list = list
