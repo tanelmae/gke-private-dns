@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"fmt"
 	"github.com/tanelmae/gke-private-dns/pkg/dns"
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,6 +32,7 @@ func Run(namespace, resLabel string, syncInterval, watcherResync,
 		watcherResync: watcherResync,
 		syncInterval:  syncInterval,
 		kubeClient:    kubeClient,
+		pendingIP:     make(map[string]time.Time),
 		namespace:     namespace,
 		resLabel:      resLabel,
 	}
@@ -45,9 +47,9 @@ type RecordsManager struct {
 	timeout       time.Duration
 	watcherResync time.Duration
 	syncInterval  time.Duration
-	pendingIP     map[string]*v1.Pod
 	namespace     string
 	resLabel      string
+	pendingIP     map[string]time.Time
 }
 
 func (m RecordsManager) startWatcher() {
@@ -118,8 +120,9 @@ func (m RecordsManager) podUpdated(oldObj, newObj interface{}) {
 		we don't care about here. So we keep in memory list of pods that
 		we know that record hasn't been created.
 	*/
-	_, isPendingIP := m.pendingIP[newPod.GetName()]
+	lastTime, isPendingIP := m.pendingIP[fmt.Sprintf("%s/%s", newPod.GetNamespace(), newPod.GetName())]
 	if isPendingIP && newPod.Status.PodIP != "" {
+		klog.V(2).Infof("Able to resolve a pending record for %s since %s\n", newPod.GetName(), lastTime.String())
 		m.dnsClient.CreateRecord(newPod.GetName(), newPod.GetOwnerReferences()[0].Name, newPod.Status.PodIP)
 		delete(m.pendingIP, newPod.GetName())
 	}
@@ -128,7 +131,9 @@ func (m RecordsManager) podUpdated(oldObj, newObj interface{}) {
 // Handler for pod creation
 func (m RecordsManager) podCreated(obj interface{}) {
 	pod := obj.(*v1.Pod)
-	klog.V(2).Infof("Pod created: %s", pod.GetName())
+	podName := pod.GetName()
+	namespace := pod.GetNamespace()
+	klog.V(2).Infof("Pod created: %s/%s", namespace, podName)
 	var err error
 
 	/*
@@ -140,7 +145,8 @@ func (m RecordsManager) podCreated(obj interface{}) {
 	if pod.Status.PodIP == "" {
 		klog.Warningln("Pod IP missing. Will try to resolve.")
 		wait.Poll(2*time.Second, m.timeout, func() (bool, error) {
-			pod, err := m.kubeClient.CoreV1().Pods(pod.Namespace).Get(pod.GetName(), metav1.GetOptions{})
+			pod, err := m.kubeClient.CoreV1().Pods(
+				pod.GetNamespace()).Get(pod.GetName(), metav1.GetOptions{})
 			if err != nil {
 				klog.Error(err)
 				return false, nil
@@ -152,7 +158,8 @@ func (m RecordsManager) podCreated(obj interface{}) {
 			return false, nil
 		})
 
-		pod, err = m.kubeClient.CoreV1().Pods(pod.Namespace).Get(pod.GetName(), metav1.GetOptions{})
+		pod, err = m.kubeClient.CoreV1().Pods(
+			pod.GetNamespace()).Get(pod.GetName(), metav1.GetOptions{})
 		if err != nil {
 			klog.Error(err)
 		}
@@ -160,7 +167,7 @@ func (m RecordsManager) podCreated(obj interface{}) {
 		// Leave if for the pod updated event handler
 		if err != nil || pod.Status.PodIP == "" {
 			klog.V(2).Infof("Failed get pod IP in %s\n", m.timeout)
-			m.pendingIP[pod.GetName()] = pod
+			m.pendingIP[fmt.Sprintf("%s/%s", namespace, podName)] = time.Now()
 			return
 		}
 	}
